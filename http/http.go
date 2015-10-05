@@ -1,4 +1,4 @@
-package main
+package http
 
 import (
 	"crypto/rand"
@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+
+	"github.com/danderson/pixiecore/api"
+	"github.com/danderson/pixiecore/log"
 )
 
 // pxelinux configuration that tells the PXE/UNDI stack to boot from
@@ -30,16 +33,16 @@ const limerick = `
 `
 
 type httpServer struct {
-	booter  Booter
+	booter  api.Booter
 	ldlinux []byte
 	key     [32]byte // to sign URLs
 }
 
 func (s *httpServer) Ldlinux(w http.ResponseWriter, r *http.Request) {
-	Debug("HTTP", "Starting send of ldlinux.c32 to %s (%d bytes)", r.RemoteAddr, len(s.ldlinux))
+	log.Debug("HTTP", "Starting send of ldlinux.c32 to %s (%d bytes)", r.RemoteAddr, len(s.ldlinux))
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Write(s.ldlinux)
-	Log("HTTP", "Sent ldlinux.c32 to %s (%d bytes)", r.RemoteAddr, len(s.ldlinux))
+	log.Log("HTTP", "Sent ldlinux.c32 to %s (%d bytes)", r.RemoteAddr, len(s.ldlinux))
 }
 
 func (s *httpServer) PxelinuxConfig(w http.ResponseWriter, r *http.Request) {
@@ -48,13 +51,13 @@ func (s *httpServer) PxelinuxConfig(w http.ResponseWriter, r *http.Request) {
 	macStr := filepath.Base(r.URL.Path)
 	errStr := fmt.Sprintf("%s requested a pxelinux config from URL %q, which does not include a MAC address", r.RemoteAddr, r.URL)
 	if !strings.HasPrefix(macStr, "01-") {
-		Debug("HTTP", errStr)
+		log.Debug("HTTP", errStr)
 		http.Error(w, "Missing MAC address in request", http.StatusBadRequest)
 		return
 	}
 	mac, err := net.ParseMAC(macStr[3:])
 	if err != nil {
-		Debug("HTTP", errStr)
+		log.Debug("HTTP", errStr)
 		http.Error(w, "Malformed MAC address in request", http.StatusBadRequest)
 		return
 	}
@@ -65,7 +68,7 @@ func (s *httpServer) PxelinuxConfig(w http.ResponseWriter, r *http.Request) {
 		// we shouldn't be netbooting. So, give it a config that tells
 		// pxelinux to shut down PXE booting and continue with the
 		// next local boot method.
-		Debug("HTTP", "Telling pxelinux on %s (%s) to boot from disk because of API server verdict: %s", mac, r.RemoteAddr, err)
+		log.Debug("HTTP", "Telling pxelinux on %s (%s) to boot from disk because of API server verdict: %s", mac, r.RemoteAddr, err)
 		w.Write([]byte(bootFromDisk))
 		return
 	}
@@ -87,20 +90,20 @@ APPEND initrd=%s %s
 `, strings.Replace(limerick, "\n", "\nSAY ", -1), spec.Kernel, strings.Join(spec.Initrd, ","), spec.Cmdline)
 
 	w.Write([]byte(cfg))
-	Log("HTTP", "Sent pxelinux config to %s (%s)", mac, r.RemoteAddr)
+	log.Log("HTTP", "Sent pxelinux config to %s (%s)", mac, r.RemoteAddr)
 }
 
 func (s *httpServer) File(w http.ResponseWriter, r *http.Request) {
 	encodedID := filepath.Base(r.URL.Path)
 	id, err := base64.URLEncoding.DecodeString(encodedID)
 	if err != nil {
-		Log("http", "Bad base64 encoding for URL %q from %s: %s", r.URL, r.RemoteAddr, err)
+		log.Log("http", "Bad base64 encoding for URL %q from %s: %s", r.URL, r.RemoteAddr, err)
 		http.Error(w, "Malformed file ID", http.StatusBadRequest)
 		return
 	}
 	f, pretty, err := s.booter.File(string(id))
 	if err != nil {
-		Log("HTTP", "Couldn't get byte stream for %q from %s: %s", r.URL, r.RemoteAddr, err)
+		log.Log("HTTP", "Couldn't get byte stream for %q from %s: %s", r.URL, r.RemoteAddr, err)
 		http.Error(w, "Couldn't get byte stream", http.StatusInternalServerError)
 		return
 	}
@@ -109,13 +112,13 @@ func (s *httpServer) File(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 	written, err := io.Copy(w, f)
 	if err != nil {
-		Log("HTTP", "Error serving %s to %s: %s", pretty, r.RemoteAddr, err)
+		log.Log("HTTP", "Error serving %s to %s: %s", pretty, r.RemoteAddr, err)
 		return
 	}
-	Log("HTTP", "Sent %s to %s (%d bytes)", pretty, r.RemoteAddr, written)
+	log.Log("HTTP", "Sent %s to %s (%d bytes)", pretty, r.RemoteAddr, written)
 }
 
-func ServeHTTP(port int, booter Booter, ldlinux []byte) error {
+func ServeHTTP(port int, booter api.Booter, ldlinux []byte) error {
 	s := &httpServer{
 		booter:  booter,
 		ldlinux: ldlinux,
@@ -128,6 +131,6 @@ func ServeHTTP(port int, booter Booter, ldlinux []byte) error {
 	http.HandleFunc("/pxelinux.cfg/", s.PxelinuxConfig)
 	http.HandleFunc("/f/", s.File)
 
-	Log("HTTP", "Listening on port %d", port)
+	log.Log("HTTP", "Listening on port %d", port)
 	return http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
 }

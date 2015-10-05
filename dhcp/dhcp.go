@@ -1,4 +1,4 @@
-package main
+package dhcp
 
 import (
 	"bytes"
@@ -8,9 +8,11 @@ import (
 	"net"
 
 	"golang.org/x/net/ipv4"
+	"github.com/danderson/pixiecore/api"
+	"github.com/danderson/pixiecore/log"
 )
 
-var dhcpMagic = []byte{99, 130, 83, 99}
+var DhcpMagic = []byte{99, 130, 83, 99}
 
 type DHCPPacket struct {
 	TID  []byte
@@ -20,7 +22,7 @@ type DHCPPacket struct {
 	ServerIP net.IP
 }
 
-func ServeProxyDHCP(port int, booter Booter) error {
+func ServeProxyDHCP(port int, booter api.Booter) error {
 	conn, err := net.ListenPacket("udp4", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return err
@@ -31,12 +33,12 @@ func ServeProxyDHCP(port int, booter Booter) error {
 		return err
 	}
 
-	Log("ProxyDHCP", "Listening on port %d", port)
+	log.Log("ProxyDHCP", "Listening on port %d", port)
 	buf := make([]byte, 1024)
 	for {
 		n, msg, addr, err := l.ReadFrom(buf)
 		if err != nil {
-			Log("ProxyDHCP", "Error reading from socket: %s", err)
+			log.Log("ProxyDHCP", "Error reading from socket: %s", err)
 			continue
 		}
 
@@ -45,26 +47,26 @@ func ServeProxyDHCP(port int, booter Booter) error {
 
 		req, err := ParseDHCP(buf[:n])
 		if err != nil {
-			Debug("ProxyDHCP", "ParseDHCP: %s", err)
+			log.Debug("ProxyDHCP", "ParseDHCP: %s", err)
 			continue
 		}
 
 		if err = booter.ShouldBoot(req.MAC); err != nil {
-			Debug("ProxyDHCP", "Not offering to boot %s: %s", req.MAC, err)
+			log.Debug("ProxyDHCP", "Not offering to boot %s: %s", req.MAC, err)
 			continue
 		}
 
-		req.ServerIP, err = interfaceIP(msg.IfIndex)
+		req.ServerIP, err = InterfaceIP(msg.IfIndex)
 		if err != nil {
-			Log("ProxyDHCP", "Couldn't find an IP address to use to reply to %s: %s", req.MAC, err)
+			log.Log("ProxyDHCP", "Couldn't find an IP address to use to reply to %s: %s", req.MAC, err)
 			continue
 		}
 
-		Log("ProxyDHCP", "Offering to boot %s (via %s)", req.MAC, req.ServerIP)
+		log.Log("ProxyDHCP", "Offering to boot %s (via %s)", req.MAC, req.ServerIP)
 		if _, err := l.WriteTo(OfferDHCP(req), &ipv4.ControlMessage{
 			IfIndex: msg.IfIndex,
 		}, udpAddr); err != nil {
-			Log("ProxyDHCP", "Responding to %s: %s", req.MAC, err)
+			log.Log("ProxyDHCP", "Responding to %s: %s", req.MAC, err)
 			continue
 		}
 	}
@@ -84,7 +86,7 @@ func OfferDHCP(p *DHCPPacket) []byte {
 	b.Write(bootp[:])
 
 	// DHCP magic
-	b.Write(dhcpMagic)
+	b.Write(DhcpMagic)
 	// Type = DHCPOFFER
 	b.Write([]byte{53, 1, 2})
 	// Server ID
@@ -138,11 +140,11 @@ func ParseDHCP(b []byte) (req *DHCPPacket, err error) {
 	if b[1] != 1 && b[2] != 6 {
 		return nil, fmt.Errorf("packet from %s is not for an Ethernet PHY", ret.MAC)
 	}
-	if !bytes.Equal(b[236:240], dhcpMagic) {
+	if !bytes.Equal(b[236:240], DhcpMagic) {
 		return nil, fmt.Errorf("packet from %s is not a DHCP request", ret.MAC)
 	}
 
-	typ, val, opts := dhcpOption(b[240:])
+	typ, val, opts := DhcpOption(b[240:])
 	for typ != 255 {
 		switch typ {
 		case 53:
@@ -165,7 +167,7 @@ func ParseDHCP(b []byte) (req *DHCPPacket, err error) {
 			}
 			ret.GUID = val[1:]
 		}
-		typ, val, opts = dhcpOption(opts)
+		typ, val, opts = DhcpOption(opts)
 	}
 
 	if ret.GUID == nil {
@@ -176,7 +178,7 @@ func ParseDHCP(b []byte) (req *DHCPPacket, err error) {
 	return ret, nil
 }
 
-func dhcpOption(b []byte) (typ byte, val []byte, next []byte) {
+func DhcpOption(b []byte) (typ byte, val []byte, next []byte) {
 	if len(b) < 2 || b[0] == 255 {
 		return 255, nil, nil
 	}
@@ -187,7 +189,7 @@ func dhcpOption(b []byte) (typ byte, val []byte, next []byte) {
 	return typ, b[2 : 2+l], b[2+l:]
 }
 
-func interfaceIP(ifIdx int) (net.IP, error) {
+func InterfaceIP(ifIdx int) (net.IP, error) {
 	iface, err := net.InterfaceByIndex(ifIdx)
 	if err != nil {
 		return nil, err

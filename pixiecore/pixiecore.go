@@ -10,7 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/danderson/pixiecore/api"
+	"github.com/danderson/pixiecore/dhcp"
+	"github.com/danderson/pixiecore/http"
+	"github.com/danderson/pixiecore/pxe"
 	"github.com/danderson/pixiecore/tftp"
+	pixiecorelog "github.com/danderson/pixiecore/log"
 )
 
 //go:generate go-bindata -o pxelinux_autogen.go -prefix=pxelinux -ignore=README.md pxelinux
@@ -36,7 +41,7 @@ var (
 	debug = flag.Bool("debug", false, "Log more things that aren't directly related to booting a recognized client")
 )
 
-func pickBooter() (Booter, error) {
+func pickBooter() (api.Booter, error) {
 	switch {
 	case *apiServer != "":
 		if *kernelFile != "" {
@@ -50,7 +55,7 @@ func pickBooter() (Booter, error) {
 		}
 
 		log.Printf("Starting Pixiecore in API mode, with server %s", *apiServer)
-		return RemoteBooter(*apiServer, *apiTimeout)
+		return api.RemoteBooter(*apiServer, *apiTimeout)
 
 	case *kernelFile != "":
 		if *apiServer != "" {
@@ -61,7 +66,7 @@ func pickBooter() (Booter, error) {
 		}
 
 		log.Printf("Starting Pixiecore in static mode")
-		return StaticBooter(*kernelFile, strings.Split(*initrdFile, ","), *kernelCmdline), nil
+		return api.StaticBooter(*kernelFile, strings.Split(*initrdFile, ","), *kernelCmdline), nil
 
 	default:
 		return nil, errors.New("must specify either -api, or -kernel/-initrd")
@@ -90,18 +95,18 @@ func main() {
 	}
 
 	go func() {
-		log.Fatalln(ServeProxyDHCP(*portDHCP, booter))
+		log.Fatalln(dhcp.ServeProxyDHCP(*portDHCP, booter))
 	}()
 	go func() {
-		log.Fatalln(ServePXE(*portPXE, *portHTTP))
+		log.Fatalln(pxe.ServePXE(*portPXE, *portHTTP))
 	}()
 	go func() {
-		tftp.Log = func(msg string, args ...interface{}) { Log("TFTP", msg, args...) }
-		tftp.Debug = func(msg string, args ...interface{}) { Debug("TFTP", msg, args...) }
+		tftp.Log = func(msg string, args ...interface{}) { pixiecorelog.Log("TFTP", msg, args...) }
+		tftp.Debug = func(msg string, args ...interface{}) { pixiecorelog.Debug("TFTP", msg, args...) }
 		log.Fatalln(tftp.ListenAndServe("udp4", ":"+strconv.Itoa(*portTFTP), tftp.Blob(pxelinux)))
 	}()
 	go func() {
-		log.Fatalln(ServeHTTP(*portHTTP, booter, ldlinux))
+		log.Fatalln(http.ServeHTTP(*portHTTP, booter, ldlinux))
 	}()
-	RecordLogs(*debug)
+	pixiecorelog.RecordLogs(*debug)
 }

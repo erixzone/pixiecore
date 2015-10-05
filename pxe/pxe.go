@@ -1,4 +1,4 @@
-package main
+package pxe
 
 import (
 	"bytes"
@@ -7,10 +7,12 @@ import (
 	"net"
 
 	"golang.org/x/net/ipv4"
+	"github.com/danderson/pixiecore/dhcp"
+	"github.com/danderson/pixiecore/log"
 )
 
 type PXEPacket struct {
-	DHCPPacket
+	dhcp.DHCPPacket
 	ClientIP net.IP
 	// The boot type requested by the client. We need to mirror this
 	// in the PXE reply.
@@ -30,34 +32,34 @@ func ServePXE(pxePort, httpPort int) error {
 		return err
 	}
 
-	Log("PXE", "Listening on port %d", pxePort)
+	log.Log("PXE", "Listening on port %d", pxePort)
 	buf := make([]byte, 1024)
 	for {
 		n, msg, addr, err := l.ReadFrom(buf)
 		if err != nil {
-			Log("PXE", "Error reading from socket: %s", err)
+			log.Log("PXE", "Error reading from socket: %s", err)
 			continue
 		}
 
 		req, err := ParsePXE(buf[:n])
 		if err != nil {
-			Debug("PXE", "ParsePXE: %s", err)
+			log.Debug("PXE", "ParsePXE: %s", err)
 			continue
 		}
 
-		req.ServerIP, err = interfaceIP(msg.IfIndex)
+		req.ServerIP, err = dhcp.InterfaceIP(msg.IfIndex)
 		if err != nil {
-			Log("PXE", "Couldn't find an IP address to use to reply to %s: %s", req.MAC, err)
+			log.Log("PXE", "Couldn't find an IP address to use to reply to %s: %s", req.MAC, err)
 			continue
 		}
 		req.HTTPServer = fmt.Sprintf("http://%s:%d/", req.ServerIP, httpPort)
 
-		Log("PXE", "Chainloading %s (%s) to pxelinux (via %s)", req.MAC, req.ClientIP, req.ServerIP)
+		log.Log("PXE", "Chainloading %s (%s) to pxelinux (via %s)", req.MAC, req.ClientIP, req.ServerIP)
 
 		if _, err := l.WriteTo(ReplyPXE(req), &ipv4.ControlMessage{
 			IfIndex: msg.IfIndex,
 		}, addr); err != nil {
-			Log("PXE", "Responding to %s: %s", req.MAC, err)
+			log.Log("PXE", "Responding to %s: %s", req.MAC, err)
 			continue
 		}
 	}
@@ -83,7 +85,7 @@ func ReplyPXE(p *PXEPacket) []byte {
 	b.Write(bootp[:])
 
 	// DHCP magic
-	b.Write(dhcpMagic)
+	b.Write(dhcp.DhcpMagic)
 	// Type = DHCPACK
 	b.Write([]byte{53, 1, 5})
 	// Server ID
@@ -119,7 +121,7 @@ func ParsePXE(b []byte) (req *PXEPacket, err error) {
 	}
 
 	ret := &PXEPacket{
-		DHCPPacket: DHCPPacket{
+		DHCPPacket: dhcp.DHCPPacket{
 			TID: b[4:8],
 			MAC: net.HardwareAddr(b[28:34]),
 		},
@@ -129,21 +131,21 @@ func ParsePXE(b []byte) (req *PXEPacket, err error) {
 	// We do lighter packet verification here, because the PXE port
 	// should not have random unrelated traffic on it, and if there
 	// is, the clients deserve everything they get.
-	if !bytes.Equal(b[236:240], dhcpMagic) {
+	if !bytes.Equal(b[236:240], dhcp.DhcpMagic) {
 		return nil, fmt.Errorf("packet from %s (%s) is not a DHCP request", ret.MAC, ret.ClientIP)
 	}
 
-	typ, val, opts := dhcpOption(b[240:])
+	typ, val, opts := dhcp.DhcpOption(b[240:])
 	for typ != 255 {
 		switch typ {
 		case 43:
-			pxeTyp, pxeVal, val := dhcpOption(val)
+			pxeTyp, pxeVal, val := dhcp.DhcpOption(val)
 			for pxeTyp != 255 {
 				if pxeTyp == 71 {
 					ret.BootType = pxeVal
 					break
 				}
-				pxeTyp, pxeVal, val = dhcpOption(val)
+				pxeTyp, pxeVal, val = dhcp.DhcpOption(val)
 			}
 		case 97:
 			if len(val) != 17 || val[0] != 0 {
@@ -151,7 +153,7 @@ func ParsePXE(b []byte) (req *PXEPacket, err error) {
 			}
 			ret.GUID = val[1:]
 		}
-		typ, val, opts = dhcpOption(opts)
+		typ, val, opts = dhcp.DhcpOption(opts)
 	}
 
 	if ret.GUID == nil {
