@@ -11,14 +11,13 @@ import (
 	"time"
 
 	"github.com/danderson/pixiecore/api"
+	"github.com/danderson/pixiecore/assets"
 	"github.com/danderson/pixiecore/dhcp"
 	"github.com/danderson/pixiecore/http"
 	"github.com/danderson/pixiecore/pxe"
 	"github.com/danderson/pixiecore/tftp"
 	pixiecorelog "github.com/danderson/pixiecore/log"
 )
-
-//go:generate go-bindata -o pxelinux_autogen.go -prefix=pxelinux -ignore=README.md pxelinux
 
 var (
 	// I'm sort of giving you the option to change these ports here,
@@ -83,12 +82,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	pxelinux, err := Asset("lpxelinux.0")
+	pxelinux, err := assets.Asset("lpxelinux.0")
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-	ldlinux, err := Asset("ldlinux.c32")
+	ldlinux, err := assets.Asset("ldlinux.c32")
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
